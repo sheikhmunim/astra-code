@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "astra-code"
+version = "0.1.0"
+description = "Local + cloud coding agent — Ollama, Claude, OpenAI, Groq"
+requires-python = ">=3.10"
+dependencies = [
+    "langchain>=0.3.0",
+    "langchain-ollama>=0.2.0",
+    "langchain-community>=0.3.0",
+    "langgraph>=0.2.0",
+    "rich>=13.0.0",
+    "click>=8.1.0",
+]
+
+[project.optional-dependencies]
+anthropic = ["langchain-anthropic>=0.3.0"]
+openai    = ["langchain-openai>=0.3.0"]
+groq      = ["langchain-groq>=0.2.0"]
+all       = ["langchain-anthropic>=0.3.0", "langchain-openai>=0.3.0", "langchain-groq>=0.2.0"]
+
+[project.scripts]
+astra = "main:cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.setuptools]
+py-modules = ["main"]

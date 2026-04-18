@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "Bash(pip install:*)",
+      "Bash(where astra:*)",
+      "Bash(astra --help)",
+      "Bash(python -c \"from main import cli; from cli.interface import StreamingRenderer; print\\('OK'\\)\")",
+      "Bash(python -c ':*)",
+      "Bash(astra config:*)",
+      "Bash(python:*)"
+    ]
+  }
+}
