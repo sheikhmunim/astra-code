@@ -1,13 +1,13 @@
 import threading
 import random
 from rich.console import Console
-from rich.syntax import Syntax
 from rich.rule import Rule
 from rich.markup import escape
 from rich.text import Text
 from rich.panel import Panel
 from rich.align import Align
 from rich.columns import Columns
+from rich.markdown import Markdown
 
 from agent.parser import parse_react_action, parse_final_answer, parse_thought
 
@@ -168,9 +168,12 @@ class StreamingRenderer:
         self._line_buf      = ""
         self._full_buf      = ""
         self._in_final      = False
-        self._final_started = False
-        self._final_printed = 0
         self._action_det    = False
+        self._final_answer  = ""   # accumulates response text for markdown rendering
+
+    @property
+    def final_answer(self) -> str:
+        return self._final_answer.strip()
 
     # ── Spinner ───────────────────────────────────────────────────────────────
 
@@ -193,12 +196,11 @@ class StreamingRenderer:
             self._spinner = None
 
     def _reset(self):
-        self._line_buf      = ""
-        self._full_buf      = ""
-        self._in_final      = False
-        self._final_started = False
-        self._final_printed = 0
-        self._action_det    = False
+        self._line_buf     = ""
+        self._full_buf     = ""
+        self._in_final     = False
+        self._action_det   = False
+        self._final_answer = ""
 
     # ── Token streaming ───────────────────────────────────────────────────────
 
@@ -215,13 +217,6 @@ class StreamingRenderer:
         while "\n" in self._line_buf:
             line, self._line_buf = self._line_buf.split("\n", 1)
             self._render_line(line)
-            self._final_printed = 0
-
-        if self._in_final and self._line_buf:
-            new = self._line_buf[self._final_printed:]
-            if new:
-                console.print(new, end="", highlight=False)
-                self._final_printed = len(self._line_buf)
 
     def _render_line(self, line: str):
         stripped = line.strip()
@@ -239,18 +234,16 @@ class StreamingRenderer:
 
         elif low.startswith("final answer:"):
             self._in_final = True
-            if not self._final_started:
-                console.print()
-                self._final_started = True
             start = stripped[13:].strip()
             if start:
-                console.print(start, end="", highlight=False)
+                self._final_answer += start + "\n"
 
         elif self._in_final:
-            _render_response_line(line)
+            self._final_answer += line + "\n"
 
         elif stripped and not low.startswith(("observation:", "action input:")):
-            console.print(line, highlight=False)
+            # Native mode — buffer response text for markdown rendering
+            self._final_answer += line + "\n"
 
     # ── Tool display ──────────────────────────────────────────────────────────
 
@@ -269,38 +262,10 @@ class StreamingRenderer:
     def flush(self):
         if self._line_buf.strip():
             self._render_line(self._line_buf)
-        if self._in_final:
+        if self._final_answer.strip():
+            console.print()
+            console.print(Markdown(self._final_answer.strip()))
             console.print()
         self._stop_spinner()
 
 
-# ── Response line renderer (handles code blocks inline) ───────────────────────
-
-_in_code_block   = False
-_code_block_lang = "text"
-_code_lines      = []
-
-
-def _render_response_line(line: str):
-    global _in_code_block, _code_block_lang, _code_lines
-
-    if line.strip().startswith("```"):
-        if not _in_code_block:
-            _in_code_block   = True
-            _code_block_lang = line.strip()[3:].strip() or "text"
-            _code_lines      = []
-        else:
-            # End of block — render it
-            console.print(Syntax(
-                "\n".join(_code_lines),
-                _code_block_lang,
-                theme="monokai",
-                line_numbers=False,
-                background_color="default",
-            ))
-            _in_code_block = False
-            _code_lines    = []
-    elif _in_code_block:
-        _code_lines.append(line)
-    else:
-        console.print(line, highlight=False)

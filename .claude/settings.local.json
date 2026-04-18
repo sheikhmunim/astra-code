@@ -8,7 +8,13 @@
       "Bash(python -c \"from main import cli; from cli.interface import StreamingRenderer; print\\('OK'\\)\")",
       "Bash(python -c ':*)",
       "Bash(astra config:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(taskkill /F /IM astra.exe)",
+      "Read(//c/Users/Munim/anaconda3/Lib/site-packages/**)",
+      "Bash(.venv/Scripts/pip install:*)",
+      "Bash(wait)",
+      "Bash(.venv/Scripts/python -m build)",
+      "Bash(.venv/Scripts/twine upload:*)"
     ]
   }
 }

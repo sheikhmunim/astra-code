@@ -18,6 +18,7 @@ from rich.rule import Rule
 from cli.interface import console, print_banner, StreamingRenderer
 from config.manager import load_config, get_active_provider, get_provider_cfg
 from config.providers import build_llm, PROVIDER_DISPLAY
+from training.logger import ask_rating, log_example
 
 
 # ── CLI group ─────────────────────────────────────────────────────────────────
@@ -26,7 +27,7 @@ from config.providers import build_llm, PROVIDER_DISPLAY
 @click.pass_context
 @click.option("--model", "-m", default=None, help="Override model for this session")
 @click.option("--provider", "-p", default=None,
-              type=click.Choice(["ollama", "anthropic", "openai", "groq"], case_sensitive=False),
+              type=click.Choice(["ollama", "anthropic", "openai", "groq","minmax"], case_sensitive=False),
               help="Override provider for this session")
 @click.option("--show-tools/--no-show-tools", default=True, help="Show tool calls and results")
 def cli(ctx, model, provider, show_tools):
@@ -57,6 +58,12 @@ def _run_chat(model=None, provider=None, show_tools=True):
         active_p = get_active_provider(cfg)
         from config.manager import set_provider_field
         cfg = set_provider_field(cfg, active_p, "model", model)
+
+    # Check Ollama is installed and ready (only when using Ollama)
+    if get_active_provider(cfg) == "ollama":
+        from cli.startup import check_ollama
+        if not check_ollama():
+            return
 
     # Build LLM from config
     try:
@@ -155,6 +162,7 @@ def _run_chat(model=None, provider=None, show_tools=True):
                         renderer.thinking()
 
             renderer.flush()
+            _rate_and_log(renderer, user_input, active_model, active_provider)
 
         except KeyboardInterrupt:
             renderer.flush()
@@ -162,6 +170,19 @@ def _run_chat(model=None, provider=None, show_tools=True):
         except Exception as e:
             renderer.flush()
             console.print(f"[red]Error:[/red] {e}")
+
+
+# ── Rating + logging ──────────────────────────────────────────────────────────
+
+def _rate_and_log(renderer: StreamingRenderer, user_input: str, model: str, provider: str):
+    """Ask for a rating and save to training log if given."""
+    answer = renderer.final_answer
+    if not answer:
+        return
+    rating = ask_rating()
+    if rating is not None:
+        log_example(user=user_input, response=answer, rating=rating,
+                    model=model, provider=provider)
 
 
 # ── Slash command handler ─────────────────────────────────────────────────────

@@ -21,6 +21,7 @@ PROVIDER_DISPLAY = {
     "anthropic": "Anthropic (Claude)",
     "openai": "OpenAI",
     "groq": "Groq",
+    "minmax": "MiniMax"
 }
 
 MODEL_SUGGESTIONS = {
@@ -28,6 +29,7 @@ MODEL_SUGGESTIONS = {
     "anthropic": ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5-20251001"],
     "openai": ["gpt-4o", "gpt-4o-mini", "o3-mini"],
     "groq": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"],
+    "minmax": ["minimax/minimax-m2.5", "minimax/minimax-text-01"],
 }
 
 
@@ -49,6 +51,8 @@ def build_llm(cfg: dict) -> Tuple[Any, str]:
         return _build_openai(pcfg)
     elif provider == "groq":
         return _build_groq(pcfg)
+    elif provider == "minmax":
+        return _build_minmax(pcfg)
     else:
         raise ValueError(f"Unknown provider: {provider!r}")
 
@@ -118,3 +122,23 @@ def _build_groq(pcfg: dict):
         temperature=0,
     )
     return llm, tool_mode
+
+def _build_minmax(pcfg: dict):
+    try:
+        from langchain_openai import ChatOpenAI
+    except ImportError:
+        raise ImportError("Run: pip install langchain-openai")
+
+    api_key = pcfg.get("api_key") or ""
+    if not api_key:
+        raise ValueError("MiniMax API key not set. Run: astra config")
+
+    llm = ChatOpenAI(
+        model=pcfg.get("model", "minimax/minimax-m2.5"),
+        api_key=api_key,
+        base_url="https://openrouter.ai/api/v1",
+        temperature=0,
+    )
+    return llm, "react"
+    
+

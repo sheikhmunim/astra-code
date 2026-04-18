@@ -28,6 +28,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "api_key": "",
             "model": "llama-3.3-70b-versatile",
         },
+        "minmax": {
+            "api_key": "",
+            "model": "minimax/minimax-m2.5"
+        },
     },
 }
 

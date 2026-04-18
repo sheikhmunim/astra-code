@@ -16,7 +16,7 @@ from config.providers import PROVIDER_DISPLAY, MODEL_SUGGESTIONS
 
 console = Console()
 
-PROVIDERS = ["ollama", "anthropic", "openai", "groq"]
+PROVIDERS = ["ollama", "anthropic", "openai", "groq", "minmax"]
 CANCEL_WORDS = {"exit", "quit", "cancel", "q", "back", ""}
 
 
@@ -192,12 +192,14 @@ _PROVIDER_PACKAGES = {
     "anthropic": "langchain-anthropic",
     "openai":    "langchain-openai",
     "groq":      "langchain-groq",
+    "minmax":    "langchain-openai",
 }
 
 _PROVIDER_IMPORTS = {
     "anthropic": "langchain_anthropic",
     "openai":    "langchain_openai",
     "groq":      "langchain_groq",
+    "minmax":    "langchain-openai",
 }
 
 
