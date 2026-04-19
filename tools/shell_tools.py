@@ -1,3 +1,4 @@
+import os
 import subprocess
 from langchain_core.tools import tool
 from config.settings import BASH_TIMEOUT
@@ -16,6 +17,7 @@ def bash(command: str) -> str:
             capture_output=True,
             text=True,
             timeout=BASH_TIMEOUT,
+            cwd=os.getcwd(),
         )
         parts = []
         if result.stdout.strip():

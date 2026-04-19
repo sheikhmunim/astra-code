@@ -54,6 +54,21 @@ LOGO = """\
  ▀  ▀  ▀▀▀▀  ▀▀▀ .▀  ▀ ▀  ▀"""
 
 
+def print_plan(steps: list[str]):
+    """Display the agent's plan before it starts working."""
+    body = "\n".join(
+        f"  [cyan]{i+1}.[/cyan] {step}" for i, step in enumerate(steps)
+    )
+    console.print(Panel(
+        body,
+        title="[cyan]Plan[/cyan]",
+        border_style="dim cyan",
+        expand=False,
+        padding=(0, 2),
+    ))
+    console.print()
+
+
 def print_banner(model: str, cwd: str):
     console.print()
     console.print(Align.center(Text(LOGO, style="bold cyan")))
@@ -263,9 +278,15 @@ class StreamingRenderer:
         if self._line_buf.strip():
             self._render_line(self._line_buf)
         if self._final_answer.strip():
-            console.print()
-            console.print(Markdown(self._final_answer.strip()))
-            console.print()
+            # Strip Memory: lines — they're for the graph, not the user
+            clean = "\n".join(
+                l for l in self._final_answer.splitlines()
+                if not l.strip().lower().startswith("memory:")
+            ).strip()
+            if clean:
+                console.print()
+                console.print(Markdown(clean))
+                console.print()
         self._stop_spinner()
 
 

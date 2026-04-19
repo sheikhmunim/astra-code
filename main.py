@@ -15,6 +15,7 @@ from langchain_core.messages import AIMessage
 from agent.graph import build_graph
 from agent.parser import parse_react_action
 from rich.rule import Rule
+from rich.table import Table
 from cli.interface import console, print_banner, StreamingRenderer
 from config.manager import load_config, get_active_provider, get_provider_cfg
 from config.providers import build_llm, PROVIDER_DISPLAY
@@ -27,7 +28,7 @@ from training.logger import ask_rating, log_example
 @click.pass_context
 @click.option("--model", "-m", default=None, help="Override model for this session")
 @click.option("--provider", "-p", default=None,
-              type=click.Choice(["ollama", "anthropic", "openai", "groq","minmax"], case_sensitive=False),
+              type=click.Choice(["ollama", "anthropic", "openai", "groq", "minmax"], case_sensitive=False),
               help="Override provider for this session")
 @click.option("--show-tools/--no-show-tools", default=True, help="Show tool calls and results")
 def cli(ctx, model, provider, show_tools):
@@ -81,9 +82,10 @@ def _run_chat(model=None, provider=None, show_tools=True):
 
     print_banner(model_label, cwd)
 
-    graph = build_graph(llm=llm, tool_mode=tool_mode, model_label=model_label)
+    graph, memory_store = build_graph(llm=llm, tool_mode=tool_mode, model_label=model_label, cwd=cwd)
     thread_id = "session-1"
     graph_config = {"configurable": {"thread_id": thread_id}}
+    force_plan = False
 
     while True:
         try:
@@ -98,12 +100,14 @@ def _run_chat(model=None, provider=None, show_tools=True):
 
         # ── Slash commands (/ or \ prefix) ───────────────────────────────────
         if user_input.startswith("/") or user_input.startswith("\\"):
-            result = _handle_slash(user_input, cfg, cwd, show_tools)
+            result = _handle_slash(user_input, cfg, cwd, show_tools, memory_store)
             if result == "exit":
                 break
+            elif result == "force_plan":
+                force_plan = True
+                console.print("[dim cyan]Planning enabled for next message.[/dim cyan]")
             elif result is not None:
-                # New graph returned after /model switch
-                llm, tool_mode, model_label, graph, cfg = result
+                llm, tool_mode, model_label, graph, memory_store, cfg = result
                 graph_config = {"configurable": {"thread_id": "session-1"}}
             continue
 
@@ -113,10 +117,14 @@ def _run_chat(model=None, provider=None, show_tools=True):
 
         # ── Agent invocation ─────────────────────────────────────────────────
         state_input = {
-            "messages": [{"role": "user", "content": user_input}],
-            "cwd": cwd,
-            "iterations": 0,
+            "messages":         [{"role": "user", "content": user_input}],
+            "cwd":              cwd,
+            "iterations":       0,
+            "plan":             "",
+            "force_plan":       force_plan,
+            "reflection_count": 0,
         }
+        force_plan = False  # reset after use
 
         renderer = StreamingRenderer(show_tools=show_tools)
         renderer.thinking()
@@ -139,13 +147,11 @@ def _run_chat(model=None, provider=None, show_tools=True):
                     continue
 
                 if node == "agent":
-                    # Native mode: tool call messages have no visible content to stream
                     if isinstance(msg_chunk, AIMessage) and hasattr(msg_chunk, "tool_calls") and msg_chunk.tool_calls:
                         continue
                     renderer.on_agent_token(content)
 
                 elif node == "tools":
-                    # ReAct mode: HumanMessage("Observation: ...")
                     obs = content
                     if obs.startswith("Observation: "):
                         obs = obs[13:]
@@ -155,7 +161,6 @@ def _run_chat(model=None, provider=None, show_tools=True):
                         renderer.on_tool_result(obs)
                         renderer.thinking()
                     else:
-                        # Native mode: ToolMessage with result
                         tool_name = getattr(msg_chunk, "name", "tool")
                         renderer.on_tool_run(tool_name, {})
                         renderer.on_tool_result(obs)
@@ -175,7 +180,6 @@ def _run_chat(model=None, provider=None, show_tools=True):
 # ── Rating + logging ──────────────────────────────────────────────────────────
 
 def _rate_and_log(renderer: StreamingRenderer, user_input: str, model: str, provider: str):
-    """Ask for a rating and save to training log if given."""
     answer = renderer.final_answer
     if not answer:
         return
@@ -187,26 +191,32 @@ def _rate_and_log(renderer: StreamingRenderer, user_input: str, model: str, prov
 
 # ── Slash command handler ─────────────────────────────────────────────────────
 
-def _handle_slash(user_input: str, cfg: dict, cwd: str, show_tools: bool):
+def _handle_slash(user_input: str, cfg: dict, cwd: str, show_tools: bool, memory_store=None):
     """
     Handle /commands typed inside the chat.
     Returns:
       "exit"  → break the chat loop
-      tuple   → (llm, tool_mode, model_label, graph, cfg) after a provider switch
+      tuple   → (llm, tool_mode, model_label, graph, memory_store, cfg) after switch
       None    → command handled, continue loop
     """
-    parts = user_input.lstrip("/\\").split()
+    parts = user_input.lstrip("/\\").split(None, 1)
     cmd = parts[0].lower() if parts else ""
+    arg = parts[1].strip() if len(parts) > 1 else ""
 
     if cmd in ("exit", "quit"):
         return "exit"
 
     elif cmd == "help":
+        from rich.panel import Panel
         console.print(Panel(
-            "[bold]/configure[/bold]   — switch model or provider, set / delete API keys\n"
-            "[bold]/status[/bold]      — show current provider & model\n"
-            "[bold]/help[/bold]        — show this message\n"
-            "[bold]/exit[/bold]        — quit",
+            "[bold]/configure[/bold]              — switch model or provider, set / delete API keys\n"
+            "[bold]/status[/bold]                 — show current provider & model\n"
+            "[bold]/plan[/bold]                   — force planning for the next message\n"
+            "[bold]/remember <fact>[/bold]        — save a fact to long-term memory\n"
+            "[bold]/memories[/bold]               — show all memories for this project\n"
+            "[bold]/forget[/bold]                 — clear all memories for this project\n"
+            "[bold]/help[/bold]                   — show this message\n"
+            "[bold]/exit[/bold]                   — quit",
             title="[cyan]Slash Commands[/cyan]",
             border_style="cyan",
             expand=False,
@@ -219,6 +229,41 @@ def _handle_slash(user_input: str, cfg: dict, cwd: str, show_tools: bool):
             f"[dim]Provider:[/dim] [cyan]{PROVIDER_DISPLAY.get(active, active)}[/cyan]  "
             f"[dim]Model:[/dim] [green]{pcfg.get('model', '?')}[/green]"
         )
+
+    elif cmd == "plan":
+        return "force_plan"
+
+    elif cmd == "remember":
+        if not arg:
+            console.print("[yellow]Usage: /remember <fact to remember>[/yellow]")
+        elif memory_store and memory_store.ready:
+            memory_store.save(arg, category="explicit")
+            console.print(f"[green]✓ Remembered:[/green] {arg}")
+        else:
+            console.print("[yellow]Memory not available — install chromadb: pip install chromadb[/yellow]")
+
+    elif cmd == "memories":
+        if not memory_store or not memory_store.ready:
+            console.print("[yellow]Memory not available — install chromadb: pip install chromadb[/yellow]")
+        else:
+            memories = memory_store.list_all()
+            if not memories:
+                console.print("[dim]No memories yet for this project.[/dim]")
+            else:
+                table = Table(border_style="cyan", show_lines=True, expand=False)
+                table.add_column("Fact", min_width=40)
+                table.add_column("Type",  style="dim", width=10)
+                table.add_column("Date",  style="dim", width=12)
+                for m in memories:
+                    table.add_row(m["fact"], m["category"], m["timestamp"])
+                console.print(table)
+
+    elif cmd == "forget":
+        if memory_store and memory_store.ready:
+            memory_store.clear()
+            console.print("[green]✓ All memories cleared for this project.[/green]")
+        else:
+            console.print("[yellow]Memory not available.[/yellow]")
 
     elif cmd == "configure":
         from cli.config_ui import run_configure
@@ -234,7 +279,7 @@ def _handle_slash(user_input: str, cfg: dict, cwd: str, show_tools: bool):
 
 
 def _rebuild(cfg: dict, cwd: str, show_tools: bool):
-    """Rebuild graph after a provider switch. Returns tuple for main loop."""
+    """Rebuild graph after a provider switch."""
     try:
         llm, tool_mode = build_llm(cfg)
     except Exception as e:
@@ -244,9 +289,9 @@ def _rebuild(cfg: dict, cwd: str, show_tools: bool):
     active = get_active_provider(cfg)
     pcfg = get_provider_cfg(cfg, active)
     model_label = f"{pcfg.get('model', '')} ({PROVIDER_DISPLAY.get(active, active)})"
-    graph = build_graph(llm=llm, tool_mode=tool_mode, model_label=model_label)
-    console.print(f"[dim]Session reset — new conversation started.[/dim]")
-    return llm, tool_mode, model_label, graph, cfg
+    graph, memory_store = build_graph(llm=llm, tool_mode=tool_mode, model_label=model_label, cwd=cwd)
+    console.print("[dim]Session reset — new conversation started.[/dim]")
+    return llm, tool_mode, model_label, graph, memory_store, cfg
 
 
 if __name__ == "__main__":

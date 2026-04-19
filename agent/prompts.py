@@ -44,12 +44,14 @@ After receiving an Observation, continue or finish:
 
 Thought: <reasoning>
 Final Answer: <response to user>
+Memory: <one specific fact worth remembering about this project or user preference — or omit if nothing new>
 
 ## Rules
 - NEVER skip the Thought step.
 - Action Input must be valid JSON (escape newlines as \\n, use double quotes).
 - Always READ a file before editing it.
 - When done, use Final Answer.
+- Memory is optional — only add it if you learned something genuinely useful to remember.
 
 ## Example
 
@@ -63,6 +65,7 @@ Observation: OK: Wrote 1 lines to hello.py
 
 Thought: File created successfully.
 Final Answer: Created `hello.py` with `print('Hello, World!')`.
+Memory: Project uses plain Python scripts with no framework.
 """
 
 NATIVE_INSTRUCTIONS = """
@@ -73,10 +76,17 @@ NATIVE_INSTRUCTIONS = """
 - After running bash commands, check the output before proceeding.
 - When a task is complete, give a concise summary of what you did.
 - Never run destructive commands (rm -rf, drop table, etc.) without explicit confirmation.
+- After your response, optionally add: Memory: <one fact worth remembering about this project>
 """
 
 
-def build_system_prompt(cwd: str, model: str, native_tools: bool = False) -> str:
+def build_system_prompt(
+    cwd: str,
+    model: str,
+    native_tools: bool = False,
+    memories: list[str] | None = None,
+    plan: str = "",
+) -> str:
     os_info = f"{platform.system()} {platform.release()}"
     today = date.today().isoformat()
 
@@ -90,7 +100,17 @@ You help with software engineering tasks: reading, writing, editing code, runnin
 - Model: {model}
 """
 
+    memory_section = ""
+    if memories:
+        memory_section = "\n## What I remember about this project\n"
+        for m in memories:
+            memory_section += f"- {m}\n"
+
+    plan_section = ""
+    if plan:
+        plan_section = f"\n## Plan for this task\n{plan}\n\nFollow this plan step by step.\n"
+
     if native_tools:
-        return base + NATIVE_INSTRUCTIONS
+        return base + memory_section + plan_section + NATIVE_INSTRUCTIONS
     else:
-        return base + TOOL_DESCRIPTIONS + REACT_FORMAT
+        return base + memory_section + plan_section + TOOL_DESCRIPTIONS + REACT_FORMAT
