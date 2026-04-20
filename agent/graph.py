@@ -1,7 +1,8 @@
 import re
 
-from langchain_core.messages import SystemMessage, AIMessage, HumanMessage
+from langchain_core.messages import SystemMessage, AIMessage, HumanMessage, ToolMessage
 from langgraph.graph import StateGraph, END
+from langgraph.graph.message import RemoveMessage
 from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -11,6 +12,7 @@ from agent.parser import parse_react_action, parse_final_answer
 from agent.memory import MemoryStore
 from agent.planner import should_plan, generate_plan
 from agent.reflector import reflect, MAX_REFLECTIONS
+from agent.summarizer import should_summarize, summarize_history, KEEP_RECENT
 from tools.file_tools import read_file, write_file, edit_file
 from tools.shell_tools import bash
 from tools.search_tools import glob_search, grep_search
@@ -22,37 +24,59 @@ TOOL_MAP = {t.name: t for t in ALL_TOOLS}
 _STUCK_THRESHOLD = 3  # same tool called this many times in a row → break out
 
 
-def _detect_stuck_loop_react(messages: list, tool_name: str, threshold: int = _STUCK_THRESHOLD) -> bool:
-    """Return True if tool_name appears in ≥ threshold consecutive recent AIMessages."""
+def _args_fingerprint(tool_args: dict | None) -> str:
+    """Stable string key for a set of tool args — used for loop detection."""
+    if not tool_args:
+        return ""
+    import json
+    try:
+        return json.dumps(tool_args, sort_keys=True)
+    except Exception:
+        return str(tool_args)
+
+
+def _detect_stuck_loop_react(messages: list, tool_name: str, tool_args: dict | None, threshold: int = _STUCK_THRESHOLD) -> bool:
+    """Return True if the exact same tool+args appears ≥ threshold times in a row."""
     if not tool_name:
         return False
-    count = 1  # current call counts as 1
+    current_fp = _args_fingerprint(tool_args)
+    count = 1
     for msg in reversed(messages):
         if not isinstance(msg, AIMessage):
             continue  # skip HumanMessage observations
-        t, _ = parse_react_action(msg.content or "")
-        if t == tool_name:
+        t, a = parse_react_action(msg.content or "")
+        if t == tool_name and _args_fingerprint(a) == current_fp:
             count += 1
             if count >= threshold:
                 return True
         else:
-            break  # streak broken
+            break  # different tool or different args — not stuck
     return False
 
 
 def _detect_stuck_loop_native(messages: list, tool_calls: list, threshold: int = _STUCK_THRESHOLD) -> bool:
-    """Return True if the same set of tools appears in ≥ threshold consecutive AIMessages."""
+    """Return True if the exact same tool+args appears ≥ threshold times in a row."""
     if not tool_calls:
         return False
-    current_names = frozenset(tc["name"] for tc in tool_calls)
+    import json
+    def _tc_fp(calls):
+        try:
+            return json.dumps(
+                sorted([{"name": tc["name"], "args": tc.get("args", {})} for tc in calls],
+                       key=lambda x: x["name"]),
+                sort_keys=True,
+            )
+        except Exception:
+            return str(calls)
+
+    current_fp = _tc_fp(tool_calls)
     count = 1
     for msg in reversed(messages):
         if not isinstance(msg, AIMessage):
             continue
         if not (hasattr(msg, "tool_calls") and msg.tool_calls):
             break
-        names = frozenset(tc["name"] for tc in msg.tool_calls)
-        if names == current_names:
+        if _tc_fp(msg.tool_calls) == current_fp:
             count += 1
             if count >= threshold:
                 return True
@@ -68,6 +92,46 @@ def _parse_memory_line(text: str) -> str | None:
         if fact.lower() not in ("none", "n/a", ""):
             return fact
     return None
+
+
+_TOOL_REQUIRED_PARAMS: dict[str, str] = {
+    "write_file":  "file_path (str), content (str)",
+    "read_file":   "file_path (str)",
+    "edit_file":   "file_path (str), old_string (str), new_string (str)",
+    "bash":        "command (str)",
+    "glob_search": "pattern (str)",
+    "grep_search": "pattern (str)",
+}
+
+
+def _get_required_params(tool_name: str) -> str:
+    return _TOOL_REQUIRED_PARAMS.get(tool_name, "see tool description")
+
+
+def _sanitize_native_history(messages: list) -> list:
+    """
+    Ensure every AIMessage with tool_calls has a matching ToolMessage for each
+    tool_call_id. If any are missing (e.g. interrupted mid-turn), inject a
+    synthetic ToolMessage so Anthropic never sees an orphaned tool_use block.
+    """
+    result = []
+    for msg in messages:
+        result.append(msg)
+        if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+            # Collect IDs that still need a result
+            pending = {tc["id"] for tc in msg.tool_calls if tc.get("id")}
+            # Remove IDs already covered by ToolMessages that follow in result
+            for m in result:
+                if isinstance(m, ToolMessage) and m.tool_call_id in pending:
+                    pending.discard(m.tool_call_id)
+            # Inject synthetic results for anything still pending
+            for tc in msg.tool_calls:
+                if tc.get("id") in pending:
+                    result.append(ToolMessage(
+                        content="Tool call was interrupted and did not complete.",
+                        tool_call_id=tc["id"],
+                    ))
+    return result
 
 
 def _get_last_user_message(state: AgentState) -> str:
@@ -110,7 +174,16 @@ def _make_reflector_node(llm):
                 response = content
                 break
 
-        is_good, feedback = reflect(llm, query, response)
+        # Collect recent tool observations so reflector knows what actually ran
+        observations = []
+        for msg in state["messages"]:
+            if isinstance(msg, HumanMessage):
+                c = msg.content or ""
+                if c.startswith("Observation:"):
+                    observations.append(c[12:].strip())
+        tool_context = "\n".join(f"- {o}" for o in observations[-5:]) if observations else ""
+
+        is_good, feedback = reflect(llm, query, response, tool_context=tool_context)
 
         if not is_good and feedback:
             console.print(
@@ -154,11 +227,42 @@ def _make_planner_node(llm):
     return planner_node
 
 
+# ── Summarizer node ───────────────────────────────────────────────────────────
+
+def _make_summarizer_node(llm):
+    from cli.interface import console
+
+    def summarizer_node(state: AgentState) -> dict:
+        messages = state["messages"]
+        if not should_summarize(messages):
+            return {}
+
+        to_summarize = messages[:-KEEP_RECENT]
+        console.print(
+            f"  [dim cyan]↓ Compressing {len(to_summarize)} old messages into summary…[/dim cyan]"
+        )
+
+        summary_text = summarize_history(llm, to_summarize)
+
+        # Remove old messages from state
+        removals = [RemoveMessage(id=m.id) for m in to_summarize if hasattr(m, "id") and m.id]
+
+        # Inject summary as a context message at the front
+        summary_msg = HumanMessage(
+            content=f"[Summary of earlier conversation]\n{summary_text}"
+        )
+
+        return {"messages": removals + [summary_msg]}
+
+    return summarizer_node
+
+
 # ── ReAct graph ───────────────────────────────────────────────────────────────
 
 def _build_react_graph(llm, model_label: str, memory: MemoryStore | None):
-    planner_node   = _make_planner_node(llm)
-    reflector_node = _make_reflector_node(llm)
+    summarizer_node = _make_summarizer_node(llm)
+    planner_node    = _make_planner_node(llm)
+    reflector_node  = _make_reflector_node(llm)
 
     def agent_node(state: AgentState) -> dict:
         import os
@@ -197,7 +301,7 @@ def _build_react_graph(llm, model_label: str, memory: MemoryStore | None):
         tool_name, tool_args = parse_react_action(text)
 
         # Break out of stuck loops before executing the tool again
-        if _detect_stuck_loop_react(state["messages"], tool_name):
+        if _detect_stuck_loop_react(state["messages"], tool_name, tool_args):
             return {"messages": [HumanMessage(
                 content=(
                     f"Observation: You have called '{tool_name}' {_STUCK_THRESHOLD} times in a row "
@@ -208,10 +312,21 @@ def _build_react_graph(llm, model_label: str, memory: MemoryStore | None):
             )]}
 
         if tool_name in TOOL_MAP:
-            try:
-                result = TOOL_MAP[tool_name].invoke(tool_args or {})
-            except Exception as e:
-                result = f"ERROR: {e}"
+            # Catch empty args before invoking — give the model specific guidance
+            if not tool_args:
+                required = _get_required_params(tool_name)
+                result = (
+                    f"ERROR: Action Input was empty {{}}. "
+                    f"You must provide all required parameters for '{tool_name}'. "
+                    f"Required: {required}. "
+                    f"For write_file with large content: write the FULL file content "
+                    f"as a JSON string value, escaping newlines as \\\\n."
+                )
+            else:
+                try:
+                    result = TOOL_MAP[tool_name].invoke(tool_args)
+                except Exception as e:
+                    result = f"ERROR: {e}"
         else:
             result = f"ERROR: Unknown tool '{tool_name}'. Available: {list(TOOL_MAP.keys())}"
 
@@ -236,11 +351,13 @@ def _build_react_graph(llm, model_label: str, memory: MemoryStore | None):
         return END
 
     graph = StateGraph(AgentState)
-    graph.add_node("planner",   planner_node)
-    graph.add_node("agent",     agent_node)
-    graph.add_node("tools",     tool_node)
-    graph.add_node("reflector", reflector_node)
-    graph.set_entry_point("planner")
+    graph.add_node("summarizer", summarizer_node)
+    graph.add_node("planner",    planner_node)
+    graph.add_node("agent",      agent_node)
+    graph.add_node("tools",      tool_node)
+    graph.add_node("reflector",  reflector_node)
+    graph.set_entry_point("summarizer")
+    graph.add_edge("summarizer", "planner")
     graph.add_edge("planner", "agent")
     graph.add_conditional_edges("agent", should_continue, {
         "tools":     "tools",
@@ -258,10 +375,11 @@ def _build_react_graph(llm, model_label: str, memory: MemoryStore | None):
 # ── Native graph ──────────────────────────────────────────────────────────────
 
 def _build_native_graph(llm, model_label: str, memory: MemoryStore | None):
-    planner_node   = _make_planner_node(llm)
-    reflector_node = _make_reflector_node(llm)
-    llm_with_tools = llm.bind_tools(ALL_TOOLS)
-    tool_node      = ToolNode(ALL_TOOLS)
+    summarizer_node = _make_summarizer_node(llm)
+    planner_node    = _make_planner_node(llm)
+    reflector_node  = _make_reflector_node(llm)
+    llm_with_tools  = llm.bind_tools(ALL_TOOLS)
+    tool_node       = ToolNode(ALL_TOOLS)
 
     def agent_node(state: AgentState) -> dict:
         import os
@@ -284,7 +402,8 @@ def _build_native_graph(llm, model_label: str, memory: MemoryStore | None):
             memories=memories,
             plan=state.get("plan", ""),
         ))
-        messages = [system] + list(state["messages"])
+        clean_history = _sanitize_native_history(list(state["messages"]))
+        messages = [system] + clean_history
         response = llm_with_tools.invoke(messages)
 
         if memory and memory.ready and hasattr(response, "content"):
@@ -314,11 +433,13 @@ def _build_native_graph(llm, model_label: str, memory: MemoryStore | None):
         return END
 
     graph = StateGraph(AgentState)
-    graph.add_node("planner",   planner_node)
-    graph.add_node("agent",     agent_node)
-    graph.add_node("tools",     tool_node)
-    graph.add_node("reflector", reflector_node)
-    graph.set_entry_point("planner")
+    graph.add_node("summarizer", summarizer_node)
+    graph.add_node("planner",    planner_node)
+    graph.add_node("agent",      agent_node)
+    graph.add_node("tools",      tool_node)
+    graph.add_node("reflector",  reflector_node)
+    graph.set_entry_point("summarizer")
+    graph.add_edge("summarizer", "planner")
     graph.add_edge("planner", "agent")
     graph.add_conditional_edges("agent", should_continue, {
         "tools":     "tools",

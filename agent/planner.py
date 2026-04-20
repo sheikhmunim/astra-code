@@ -7,11 +7,11 @@ import re
 # ── Complexity heuristics ─────────────────────────────────────────────────────
 
 _COMPLEX_KEYWORDS = {
-    "refactor", "implement", "build", "create", "add", "fix", "rewrite",
-    "migrate", "convert", "optimize", "redesign", "restructure", "update",
-    "integrate", "setup", "configure", "deploy", "remove", "delete",
-    "change", "modify", "move", "rename", "split", "merge", "extract",
-    "replace", "upgrade", "debug", "test", "generate", "scaffold",
+    "refactor", "implement", "build", "rewrite",
+    "migrate", "convert", "optimize", "redesign", "restructure",
+    "integrate", "setup", "configure", "deploy",
+    "split", "merge", "extract", "upgrade", "scaffold",
+    "system", "pipeline", "architecture", "framework",
 }
 
 _SIMPLE_PREFIXES = (
@@ -21,6 +21,19 @@ _SIMPLE_PREFIXES = (
     "show me", "show the",
     "read ", "list ", "tell me", "explain",
     "describe", "where is", "who is",
+    "create a function", "write a function", "add a function",
+    "create a class", "write a class",
+    "fix ", "debug ",
+)
+
+# Single-file or single-function tasks — never plan these
+_TRIVIAL_PATTERNS = (
+    r"create\s+a\s+(function|method|class|script|file)",
+    r"write\s+a\s+(function|method|class|script|file)",
+    r"add\s+a\s+(function|method|class)",
+    r"fix\s+(a\s+)?(bug|error|issue|typo)",
+    r"rename\s+\w+",
+    r"print\s+",
 )
 
 
@@ -31,10 +44,16 @@ def should_plan(query: str, force: bool = False) -> bool:
 
     q = query.lower().strip()
 
-    # Short simple questions — skip planning
-    if len(q.split()) <= 5:
+    # Always skip for short queries
+    if len(q.split()) <= 6:
         return False
-    if any(q.startswith(p) for p in _SIMPLE_PREFIXES) and len(q.split()) < 10:
+
+    # Skip for known simple prefixes
+    if any(q.startswith(p) for p in _SIMPLE_PREFIXES):
+        return False
+
+    # Skip for trivial single-unit tasks
+    if any(re.search(p, q) for p in _TRIVIAL_PATTERNS):
         return False
 
     # Complex keyword found
@@ -42,8 +61,8 @@ def should_plan(query: str, force: bool = False) -> bool:
     if words & _COMPLEX_KEYWORDS:
         return True
 
-    # Multi-part task ("X and Y")
-    if " and " in q and len(q.split()) > 8:
+    # Multi-part task across multiple files/components
+    if " and " in q and len(q.split()) > 12:
         return True
 
     # Long query is likely complex

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "astra-code"
-version = "0.2.0"
+version = "0.3.0"
 description = "A Claude Code-style coding agent for your terminal — runs on local LLMs via Ollama or cloud APIs"
 readme = "README.md"
 requires-python = ">=3.10"

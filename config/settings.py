@@ -10,4 +10,4 @@ DEFAULT_MODEL: str = os.environ.get("ASTRA_MODEL", "qwen2.5-coder:7b")
 MAX_ITERATIONS: int = int(os.environ.get("ASTRA_MAX_ITER", "20"))
 
 # Bash tool timeout (seconds)
-BASH_TIMEOUT: int = int(os.environ.get("ASTRA_BASH_TIMEOUT", "30"))
+BASH_TIMEOUT: int = int(os.environ.get("ASTRA_BASH_TIMEOUT", "120"))

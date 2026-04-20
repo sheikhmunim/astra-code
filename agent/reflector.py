@@ -11,22 +11,33 @@ You are reviewing a coding agent's response to a user request.
 
 User request: {query}
 
-Agent response: {response}
+Tool results (what actually ran):
+{tool_context}
+
+Agent final response: {response}
 
 Check:
 1. Did the agent fully complete what was asked?
 2. Are there any errors, missing steps, or incorrect logic?
 3. Is anything left unfinished?
+4. Did the agent hallucinate success for a command that clearly failed (e.g. "not recognized", "command not found", "not installed")?
+5. Did the agent try to run Linux/macOS-only tools on Windows, or vice versa, without telling the user?
+
+IMPORTANT: If the tool results show the task was completed successfully (e.g. "Wrote N lines to file.py", "EXIT CODE: 0"), treat it as GOOD even if the final response text is brief.
 
 Reply with ONLY one of these two formats:
 - GOOD
 - NEEDS_WORK: <one specific issue to fix, one sentence>
 
+Special cases — always NEEDS_WORK:
+- If the response claims success but tool output shows an error or "not recognized".
+- If the agent attempted OS-incompatible commands without explaining.
+
 No explanation, no preamble — just GOOD or NEEDS_WORK: ...
 """
 
 
-def reflect(llm, query: str, response: str) -> tuple[bool, str]:
+def reflect(llm, query: str, response: str, tool_context: str = "") -> tuple[bool, str]:
     """
     Ask the LLM to review the response.
     Returns (is_good, feedback).
@@ -39,7 +50,8 @@ def reflect(llm, query: str, response: str) -> tuple[bool, str]:
     if len(response.strip()) < 80:
         return True, ""
 
-    prompt = _REFLECT_PROMPT.format(query=query, response=response)
+    tool_context_str = tool_context if tool_context else "(no tools were called)"
+    prompt = _REFLECT_PROMPT.format(query=query, response=response, tool_context=tool_context_str)
     try:
         result = llm.invoke([HumanMessage(content=prompt)])
         content = result.content
