@@ -17,18 +17,21 @@ OLLAMA_DOWNLOAD = {
 }
 
 RECOMMENDED_MODELS = [
-    ("qwen2.5-coder:7b",      "recommended — fast, great at code"),
+    ("phi4-mini",             "default — small, fast, low RAM (~4GB)"),
+    ("qwen2.5-coder:7b",      "great at code, needs ~6GB RAM"),
     ("qwen2.5-coder:14b",     "more capable, needs ~10GB RAM"),
     ("deepseek-coder-v2:16b", "strongest local coder, needs ~12GB RAM"),
     ("llama3.1:8b",           "general purpose"),
 ]
 
 
-def check_ollama() -> bool:
+def check_ollama(cfg: dict) -> bool:
     """
     Check if Ollama is installed and running.
     If not installed: show download instructions and exit.
     If installed but no models pulled: show pull commands.
+    If the configured model isn't one of the pulled models, let the user
+    pick from what's actually installed.
     Returns True if Ollama is ready to use.
     """
     if not _ollama_installed():
@@ -39,12 +42,30 @@ def check_ollama() -> bool:
         _show_start_instructions()
         return False
 
-    pulled = _list_models()
+    pulled = list_pulled_models()
     if not pulled:
         _show_pull_instructions()
         return False
 
+    from config.manager import get_provider_cfg, set_provider_field, save_config
+
+    pcfg = get_provider_cfg(cfg, "ollama")
+    configured = pcfg.get("model", "")
+    if not _model_is_pulled(configured, pulled):
+        chosen = _select_pulled_model(pulled, configured)
+        if chosen is None:
+            return False
+        set_provider_field(cfg, "ollama", "model", chosen)
+        save_config(cfg)
+
     return True
+
+
+def _model_is_pulled(model: str, pulled: list[str]) -> bool:
+    """Compare ignoring Ollama's implicit ':latest' tag (phi4-mini == phi4-mini:latest)."""
+    def normalize(name: str) -> str:
+        return name if ":" in name else f"{name}:latest"
+    return normalize(model) in {normalize(m) for m in pulled}
 
 
 # ── Internal checks ───────────────────────────────────────────────────────────
@@ -70,8 +91,8 @@ def _ollama_running() -> bool:
         return False
 
 
-def _list_models() -> list[str]:
-    """Return list of pulled model names."""
+def list_pulled_models() -> list[str]:
+    """Return list of model names already pulled/downloaded via Ollama."""
     try:
         result = subprocess.run(
             ["ollama", "list"],
@@ -82,6 +103,32 @@ def _list_models() -> list[str]:
         return [l.split()[0] for l in lines[1:] if l.strip()]
     except Exception:
         return []
+
+
+def _select_pulled_model(pulled: list[str], current: str) -> str | None:
+    """Show downloaded Ollama models and let the user pick one."""
+    console.print(Panel(
+        f"[yellow]Configured model[/yellow] [bold]{current or '(none)'}[/bold] "
+        f"[yellow]isn't installed. Pick one you have downloaded:[/yellow]",
+        title="[cyan]Select a Model[/cyan]",
+        border_style="cyan",
+        expand=False,
+    ))
+    for i, name in enumerate(pulled, 1):
+        console.print(f"  [cyan]{i}[/cyan]. {name}")
+
+    try:
+        raw = console.input("\n[bold cyan]> [/bold cyan]").strip()
+    except (KeyboardInterrupt, EOFError):
+        return None
+
+    if raw.isdigit():
+        idx = int(raw) - 1
+        if 0 <= idx < len(pulled):
+            return pulled[idx]
+
+    console.print("[red]Invalid selection.[/red]")
+    return None
 
 
 # ── Instructions ──────────────────────────────────────────────────────────────

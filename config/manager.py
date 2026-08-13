@@ -14,7 +14,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "providers": {
         "ollama": {
             "base_url": "http://localhost:11434",
-            "model": "qwen2.5-coder:7b",
+            "model": "phi4-mini",
         },
         "anthropic": {
             "api_key": "",

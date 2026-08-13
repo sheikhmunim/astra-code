@@ -25,7 +25,7 @@ PROVIDER_DISPLAY = {
 }
 
 MODEL_SUGGESTIONS = {
-    "ollama": ["qwen2.5-coder:7b", "qwen2.5-coder:14b", "llama3.1:8b", "deepseek-coder-v2:16b"],
+    "ollama": ["phi4-mini", "qwen2.5-coder:7b", "qwen2.5-coder:14b", "llama3.1:8b", "deepseek-coder-v2:16b"],
     "anthropic": ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5-20251001"],
     "openai": ["gpt-4o", "gpt-4o-mini", "o3-mini"],
     "groq": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"],
@@ -60,7 +60,7 @@ def build_llm(cfg: dict) -> Tuple[Any, str]:
 def _build_ollama(pcfg: dict):
     from langchain_ollama import ChatOllama
     llm = ChatOllama(
-        model=pcfg.get("model", "qwen2.5-coder:7b"),
+        model=pcfg.get("model", "phi4-mini"),
         base_url=pcfg.get("base_url", "http://localhost:11434"),
         temperature=0,
     )

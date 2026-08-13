@@ -128,8 +128,15 @@ def _resolve_provider(text: str) -> str | None:
 
 def _pick_model(cfg: dict, provider: str) -> str | None:
     """Show numbered model menu and return chosen model, or None to cancel."""
+    current = get_provider_cfg(cfg, provider).get("model", "")
+
+    if provider == "ollama":
+        from cli.startup import list_pulled_models
+        pulled = list_pulled_models()
+        if pulled:
+            return _pick_from_list(pulled, current, label="Installed on this machine")
+
     suggestions = MODEL_SUGGESTIONS.get(provider, [])
-    current     = get_provider_cfg(cfg, provider).get("model", "")
 
     console.print(f"\n[bold]Model[/bold] [dim](current: {current})[/dim]")
     for i, m in enumerate(suggestions, 1):
@@ -154,6 +161,38 @@ def _pick_model(cfg: dict, provider: str) -> str | None:
         return None
 
     # Typed a model name directly
+    return raw
+
+
+def _normalize_tag(name: str) -> str:
+    """Ollama treats a bare model name as implicitly ':latest' (phi4-mini == phi4-mini:latest)."""
+    return name if ":" in name else f"{name}:latest"
+
+
+def _pick_from_list(options: list[str], current: str, label: str) -> str | None:
+    """Show a numbered menu built from real, detected values (e.g. pulled Ollama models)."""
+    console.print(f"\n[bold]Model[/bold] [dim](current: {current})[/dim]")
+    console.print(f"[dim]{label}:[/dim]")
+    for i, m in enumerate(options, 1):
+        marker = " [green]← current[/green]" if _normalize_tag(m) == _normalize_tag(current) else ""
+        console.print(f"  [cyan]{i}[/cyan]. {m}{marker}")
+    console.print(f"  [cyan]{len(options) + 1}[/cyan]. Enter custom model name")
+    console.print("  [dim]Leave blank or type 'cancel' to go back.[/dim]")
+
+    raw = _ask("> ").strip()
+    if not raw or raw.lower() in CANCEL_WORDS:
+        console.print("[dim]Cancelled.[/dim]")
+        return None
+
+    if raw.isdigit():
+        idx = int(raw) - 1
+        if 0 <= idx < len(options):
+            return options[idx]
+        if idx == len(options):          # "custom" option
+            return _ask_custom_model(current)
+        console.print("[red]Invalid number.[/red]")
+        return None
+
     return raw
 
 

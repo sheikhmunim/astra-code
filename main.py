@@ -63,7 +63,7 @@ def _run_chat(model=None, provider=None, show_tools=True):
     # Check Ollama is installed and ready (only when using Ollama)
     if get_active_provider(cfg) == "ollama":
         from cli.startup import check_ollama
-        if not check_ollama():
+        if not check_ollama(cfg):
             return
 
     # Build LLM from config
