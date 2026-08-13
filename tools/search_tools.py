@@ -4,6 +4,20 @@ import glob as _glob
 import fnmatch
 from langchain_core.tools import tool
 
+# Heavy generated/dependency directories — never worth scanning, and on real
+# projects (node_modules, venvs) walking them turns a search into a multi-second
+# unindexed disk crawl that repeats on every ReAct iteration that searches.
+_SKIP_DIRS = {
+    "node_modules", "venv", ".venv", "env", ".env",
+    "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+    "dist", "build", ".next", ".nuxt", "target", "site-packages",
+    ".idea", ".vscode", "vendor", "bin", "obj", ".tox",
+}
+
+
+def _is_skipped_path(rel_parts: list[str]) -> bool:
+    return any(part.startswith(".") or part in _SKIP_DIRS for part in rel_parts)
+
 
 @tool
 def glob_search(pattern: str, base_dir: str = ".") -> str:
@@ -19,12 +33,10 @@ def glob_search(pattern: str, base_dir: str = ".") -> str:
     search_pattern = os.path.join(base, pattern)
     raw_matches = _glob.glob(search_pattern, recursive=True)
 
-    # Filter to files only, skip hidden paths
+    # Filter to files only, skip hidden paths and heavy dependency dirs
     matches = [
         p for p in raw_matches
-        if os.path.isfile(p) and not any(
-            part.startswith(".") for part in p.replace("\\", "/").split("/")
-        )
+        if os.path.isfile(p) and not _is_skipped_path(p.replace("\\", "/").split("/"))
     ]
 
     if not matches:
@@ -72,7 +84,7 @@ def grep_search(pattern: str, path: str = ".", file_glob: str = "*") -> str:
         search_file(abs_path)
     else:
         for root, dirs, files in os.walk(abs_path):
-            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _SKIP_DIRS]
             for fname in files:
                 if fnmatch.fnmatch(fname, file_glob):
                     search_file(os.path.join(root, fname))

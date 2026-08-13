@@ -7,7 +7,7 @@ from config.settings import BASH_TIMEOUT
 @tool
 def bash(command: str) -> str:
     """Execute a shell command and return stdout, stderr, and exit code.
-    Timeout: 30 seconds. For interactive or long-running commands, append & to run in background.
+    Timeout: 120 seconds. For interactive or long-running commands, append & to run in background.
     Returns a formatted string with all output.
     """
     try:

@@ -11,7 +11,7 @@ _COMPLEX_KEYWORDS = {
     "migrate", "convert", "optimize", "redesign", "restructure",
     "integrate", "setup", "configure", "deploy",
     "split", "merge", "extract", "upgrade", "scaffold",
-    "system", "pipeline", "architecture", "framework",
+    "pipeline", "architecture",
 }
 
 _SIMPLE_PREFIXES = (

@@ -21,7 +21,7 @@ from config.settings import MAX_ITERATIONS
 ALL_TOOLS = [read_file, write_file, edit_file, bash, glob_search, grep_search]
 TOOL_MAP = {t.name: t for t in ALL_TOOLS}
 
-_STUCK_THRESHOLD = 3  # same tool called this many times in a row → break out
+_STUCK_THRESHOLD = 2  # same tool called this many times in a row → break out
 
 
 def _args_fingerprint(tool_args: dict | None) -> str:

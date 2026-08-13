@@ -4,7 +4,7 @@ Returns (is_good, feedback). If not good, feedback is injected back into the
 agent so it can fix the issue.
 """
 
-MAX_REFLECTIONS = 2
+MAX_REFLECTIONS = 1
 
 _REFLECT_PROMPT = """\
 You are reviewing a coding agent's response to a user request.
@@ -47,7 +47,13 @@ def reflect(llm, query: str, response: str, tool_context: str = "") -> tuple[boo
     from langchain_core.messages import HumanMessage
 
     # Skip reflection for very short responses — not worth the extra call
-    if len(response.strip()) < 80:
+    if len(response.strip()) < 150:
+        return True, ""
+
+    # Skip reflection when no tools ran — the checks are mostly about
+    # verifying tool results (hallucinated success, OS-incompatible commands),
+    # so a pure explanation/Q&A turn has nothing meaningful to double-check.
+    if not tool_context.strip():
         return True, ""
 
     tool_context_str = tool_context if tool_context else "(no tools were called)"

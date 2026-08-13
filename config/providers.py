@@ -59,10 +59,12 @@ def build_llm(cfg: dict) -> Tuple[Any, str]:
 
 def _build_ollama(pcfg: dict):
     from langchain_ollama import ChatOllama
+    from config.settings import OLLAMA_NUM_CTX
     llm = ChatOllama(
         model=pcfg.get("model", "phi4-mini"),
         base_url=pcfg.get("base_url", "http://localhost:11434"),
         temperature=0,
+        num_ctx=pcfg.get("num_ctx", OLLAMA_NUM_CTX),
     )
     return llm, "react"
 
